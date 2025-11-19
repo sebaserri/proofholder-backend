@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { $Enums, COI } from "@prisma/client";
+import { $Enums, BrokerInboxStatus, COI } from "@prisma/client";
 import { ExtractService } from "../extract/extract.service";
 import { FilesService } from "../files/files.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -102,7 +102,10 @@ async function runAvOnUrl(
 }
 
 function toPrismaFilesCreate(files: { url: string; kind: string }[]) {
-  return files.map((a) => ({ url: a.url, kind: a.kind as any }));
+  return files.map((a) => ({
+    fileUrl: a.url,
+    mimeType: "application/pdf",
+  }));
 }
 
 @Injectable()
@@ -161,20 +164,25 @@ export class BrokersService {
       await this.prisma.brokerInbox.create({
         data: {
           source: "EMAIL",
-          externalId:
-            (headers?.["message-id"] as string) ??
-            (body?.MessageID || body?.messageId || null),
-          vendorId: vendorId ?? null,
-          buildingId: buildingId ?? null,
-          status: "RECEIVED",
-          meta: {
+          sender:
+            (body?.from as string) ||
+            (body?.From as string) ||
+            (headers?.["from"] as string) ||
+            "unknown",
+          subject: body?.subject ?? body?.Subject ?? null,
+          body: body?.text || body?.html || null,
+          attachments: uploaded.map((u) => ({
+            url: u.url,
+            kind: u.kind,
+          })) as any,
+          status: BrokerInboxStatus.RECEIVED,
+          metadata: {
+            externalId:
+              (headers?.["message-id"] as string) ??
+              (body?.MessageID || body?.messageId || null),
+            vendorId: vendorId ?? null,
+            buildingId: buildingId ?? null,
             headers,
-            subject: body?.subject ?? body?.Subject ?? null,
-            from: body?.from ?? body?.From ?? null,
-            attachments: uploaded.map((u) => ({
-              url: u.url,
-              kind: u.kind,
-            })),
           },
         },
       });
@@ -207,7 +215,7 @@ export class BrokersService {
         vendor: { connect: { id: vendorId } },
         building: { connect: { id: buildingId } },
         status: $Enums.COIStatus.PENDING,
-        notes: "Ingestado por emial-in",
+        reviewNotes: "Ingestado por emial-in",
         files: { create: toPrismaFilesCreate(uploaded) },
       },
       include: { files: true },
@@ -224,7 +232,8 @@ export class BrokersService {
       await this.prisma.cOI.update({
         where: { id: coi.id },
         data: {
-          notes: (coi.notes || "") + " | AV: posible infección detectada",
+          reviewNotes:
+            (coi.reviewNotes || "") + " | AV: posible infección detectada",
         },
       });
     }
@@ -283,7 +292,7 @@ export class BrokersService {
         vendor: { connect: { id: vendorId } },
         building: { connect: { id: buildingId } },
         status: $Enums.COIStatus.PENDING,
-        notes: "Ingestado por API broker",
+        reviewNotes: "Ingestado por API broker",
         files: { create: toPrismaFilesCreate(uploaded) },
       },
       include: { files: true },
@@ -299,7 +308,8 @@ export class BrokersService {
       await this.prisma.cOI.update({
         where: { id: coi.id },
         data: {
-          notes: (coi.notes || "") + " | AV: posible infección detectada",
+          reviewNotes:
+            (coi.reviewNotes || "") + " | AV: posible infección detectada",
         },
       });
     }

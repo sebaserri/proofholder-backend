@@ -18,6 +18,7 @@ import { JwtAuthGuard } from "../auth/jwt.guard";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import { ExtractService } from "./extract.service";
+import { UserRole } from "@prisma/client";
 
 class ExtractResult {
   insuredName?: string;
@@ -60,7 +61,11 @@ class ApplyResult {
 @ApiBearerAuth()
 @Controller("extract")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles("ADMIN")
+@Roles(
+  UserRole.ACCOUNT_OWNER,
+  UserRole.PORTFOLIO_MANAGER,
+  UserRole.PROPERTY_MANAGER
+)
 export class ExtractController {
   constructor(private readonly svc: ExtractService) {}
 

@@ -10,6 +10,7 @@ import { JwtAuthGuard } from "../auth/jwt.guard";
 import { FilesService } from "./files.service";
 import { RolesGuard } from "../auth/roles.guard";
 import { Roles } from "../auth/roles.decorator";
+import { UserRole } from "@prisma/client";
 
 class PresignResponse {
   url: string;
@@ -22,7 +23,12 @@ class PresignResponse {
 @ApiBearerAuth()
 @Controller("files")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN','VENDOR')
+@Roles(
+  UserRole.ACCOUNT_OWNER,
+  UserRole.PORTFOLIO_MANAGER,
+  UserRole.PROPERTY_MANAGER,
+  UserRole.VENDOR
+)
 export class FilesController {
   constructor(private files: FilesService) {}
 

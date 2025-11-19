@@ -11,12 +11,18 @@ import * as QR from "qrcode";
 import { JwtAuthGuard } from "../auth/jwt.guard";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
+import { UserRole } from "@prisma/client";
 
 @ApiTags("Access")
 @ApiBearerAuth()
 @Controller("access")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles("ADMIN", "GUARD")
+@Roles(
+  UserRole.ACCOUNT_OWNER,
+  UserRole.PORTFOLIO_MANAGER,
+  UserRole.PROPERTY_MANAGER,
+  UserRole.GUARD
+)
 export class AccessQrController {
   @Get("qr")
   @ApiOperation({ summary: "Generar QR con vendorId/buildingId" })

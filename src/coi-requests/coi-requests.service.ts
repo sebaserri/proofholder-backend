@@ -31,7 +31,11 @@ export class CoiRequestsService {
       include: { vendor: true, building: true },
      });
     try {
-      await this.hooks.onCoiRequestCreated(vendor.contactEmail || (vendor as any).email, vendor.legalName, req.token);
+      await this.hooks.onCoiRequestCreated(
+        vendor.contactEmail || (vendor as any).email,
+        vendor.companyName,
+        req.token
+      );
     } catch {}
     return { token: req.token, expiresAt };
   }

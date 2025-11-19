@@ -1,3 +1,5 @@
+// ProofHolder - Production Schema (Migration-Safe)
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,195 +9,596 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  ADMIN
-  VENDOR
-  GUARD
+// ==================== ENUMS ====================
+
+enum UserRole {
+  ACCOUNT_OWNER // CEO/Owner del PM
+  PORTFOLIO_MANAGER // Senior, gestiona PMs
+  PROPERTY_MANAGER // Gestión diaria
+  BUILDING_OWNER // Owner externo (invitado)
+  TENANT // Inquilino comercial
+  VENDOR // Contratista
+  GUARD // Seguridad
 }
 
 enum COIStatus {
   PENDING
   APPROVED
   REJECTED
+  EXPIRED
 }
 
-enum FileKind {
-  CERTIFICATE
-  ENDORSEMENT
-  OTHER
+enum VendorAuthStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AccessStatus {
+  ENTRY_GRANTED
+  ENTRY_DENIED
+}
+
+enum AuthTokenType {
+  EMAIL_VERIFY
+  PWD_RESET
+  INVITE
+}
+
+enum NotificationType {
+  EMAIL
+  SMS
+  PUSH
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  REJECT
+  LOGIN
+  LOGOUT
+  VERIFY_EMAIL
+  RESET_PASSWORD
+  UPLOAD_COI
+  REVIEW_COI
+}
+
+enum CoiRequestStatus {
+  PENDING
+  USED
+  EXPIRED
+}
+
+enum BrokerInboxStatus {
+  RECEIVED
+  PARSED
+  ATTACHED
+  ERROR
+}
+
+// ==================== CORE MODELS ====================
+
+model Organization {
+  id               String   @id @default(uuid())
+  name             String
+  stripeCustomerId String?
+  plan             String   @default("free") // free, starter, professional, enterprise
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  users     User[]
+  buildings Building[]
 }
 
 model User {
-  id              String         @id @default(cuid())
-  email           String         @unique
+  id              String    @id @default(uuid())
+  email           String    @unique
   password        String
-  name            String?
-  role            Role
-  vendorId        String?
-  vendor          Vendor?        @relation(fields: [vendorId], references: [id])
-  tokens          AuthToken[]    @relation("UserTokens")
-  refreshTokens   RefreshToken[] @relation("UserRefreshTokens")
+  role            UserRole
+  organizationId  String?
+  firstName       String?
+  lastName        String?
+  phone           String?
   emailVerifiedAt DateTime?
-  createdAt       DateTime       @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+  lastLoginAt     DateTime?
 
-  @@index([emailVerifiedAt])
+  // Relations
+  organization     Organization?                 @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  vendor           Vendor?
+  tenant           Tenant?
+  guard            Guard?
+  buildingAccess   UserBuildingAccess[]
+  buildingsCreated Building[]                    @relation("BuildingCreator")
+  buildingsOwned   Building[]                    @relation("BuildingOwner")
+  assignedAccess   UserBuildingAccess[]          @relation("AccessAssigner")
+  refreshTokens    RefreshToken[]
+  authTokens       AuthToken[]
+  vendorApprovals  VendorBuildingAuthorization[] @relation("VendorApprover")
+  vendorRejections VendorBuildingAuthorization[] @relation("VendorRejector")
+  coiReviews       COI[]                         @relation("COIReviewer")
+  coiUploads       COI[]                         @relation("COIUploader")
+  auditLogs        AuditLog[]
+  notifications    NotificationLog[]
+  tenantsCreated   Tenant[]                      @relation("TenantCreator")
+  guardsCreated    Guard[]                       @relation("GuardCreator")
+  guardAssignments GuardBuildingAssignment[]     @relation("GuardAssigner")
+  coiRequests      CoiRequest[]                  @relation("RequestCreator")
+  invitations      UserInvitation[]              @relation("UserInviter")
+
+  @@index([email])
+  @@index([organizationId])
+  @@index([role])
 }
 
 model Building {
-  id           String                @id @default(cuid())
-  name         String
-  address      String
-  requirements RequirementTemplate[]
-  cois         COI[]
-  coiRequests  CoiRequest[]
-  createdAt    DateTime              @default(now())
+  id             String   @id @default(uuid())
+  name           String
+  address        String
+  city           String   @default("Unknown")
+  state          String   @default("Unknown")
+  zipCode        String   @default("00000")
+  organizationId String? // Nullable para migración
+  ownerId        String? // Building Owner (opcional)
+  createdBy      String? // Nullable para migración
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  // Relations
+  organization         Organization?                 @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner                User?                         @relation("BuildingOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  creator              User?                         @relation("BuildingCreator", fields: [createdBy], references: [id])
+  userAccess           UserBuildingAccess[]
+  vendorAuthorizations VendorBuildingAuthorization[]
+  cois                 COI[]
+  tenants              Tenant[]
+  guardAssignments     GuardBuildingAssignment[]
+  requirements         RequirementTemplate[]
+  coiRequests          CoiRequest[]
+  accessLogs           AccessLog[]
+  integrations         BuildingIntegration[]
+
+  @@index([organizationId])
+  @@index([ownerId])
 }
 
-model RequirementTemplate {
-  id                    String   @id @default(cuid())
-  buildingId            String
-  building              Building @relation(fields: [buildingId], references: [id])
-  generalLiabMin        Int?
-  autoLiabMin           Int?
-  workersCompRequired   Boolean  @default(true)
-  umbrellaMin           Int?
-  additionalInsuredText String?
-  certificateHolderText String
-  active                Boolean  @default(true)
+// SCOPING: Quién puede ver qué buildings
+model UserBuildingAccess {
+  id         String   @id @default(uuid())
+  userId     String
+  buildingId String
+  assignedBy String
+  assignedAt DateTime @default(now())
 
-  @@unique([buildingId, active])
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  assigner User     @relation("AccessAssigner", fields: [assignedBy], references: [id])
+
+  @@unique([userId, buildingId])
+  @@index([buildingId])
+  @@index([userId])
 }
+
+// ==================== VENDORS ====================
 
 model Vendor {
-  id           String       @id @default(cuid())
-  legalName    String
-  contactEmail String
+  id           String   @id @default(uuid())
+  userId       String?  @unique // Nullable para migración
+  companyName  String   @default("Unknown Company")
+  contactName  String   @default("Unknown Contact")
   contactPhone String?
-  users        User[]
-  cois         COI[]
-  coiRequests  CoiRequest[]
-  createdAt    DateTime     @default(now())
+  contactEmail String
+  serviceType  String[] @default([])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  // Relations
+  user           User?                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  authorizations VendorBuildingAuthorization[]
+  cois           COI[]
+  accessLogs     AccessLog[]
+  coiRequests    CoiRequest[]
+
+  @@index([userId])
+  @@index([companyName])
 }
 
-model COI {
-  id         String   @id @default(cuid())
+model VendorBuildingAuthorization {
+  id         String           @id @default(uuid())
   vendorId   String
-  vendor     Vendor   @relation(fields: [vendorId], references: [id])
   buildingId String
-  building   Building @relation(fields: [buildingId], references: [id])
+  status     VendorAuthStatus @default(PENDING)
+  approvedBy String?
+  approvedAt DateTime?
+  rejectedBy String?
+  rejectedAt DateTime?
+  notes      String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 
-  producer            String?
-  insuredName         String?
-  generalLiabLimit    Int?
-  autoLiabLimit       Int?
-  workersComp         Boolean?
-  umbrellaLimit       Int?
-  additionalInsured   Boolean?
-  waiverOfSubrogation Boolean?
-  certificateHolder   String?
-  effectiveDate       DateTime?
-  expirationDate      DateTime?
+  // Relations
+  vendor   Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  approver User?    @relation("VendorApprover", fields: [approvedBy], references: [id])
+  rejector User?    @relation("VendorRejector", fields: [rejectedBy], references: [id])
 
-  status COIStatus @default(PENDING)
-  notes  String?
-  files  COIFile[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  @@unique([vendorId, buildingId])
   @@index([buildingId, status])
+  @@index([vendorId])
+}
+
+// ==================== TENANTS ====================
+
+model Tenant {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  businessName   String
+  contactName    String
+  contactPhone   String?
+  contactEmail   String
+  buildingId     String
+  unitNumber     String
+  leaseStartDate DateTime?
+  leaseEndDate   DateTime?
+  createdBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  creator  User     @relation("TenantCreator", fields: [createdBy], references: [id])
+  cois     COI[]
+
+  @@index([userId])
+  @@index([buildingId])
+}
+
+// ==================== GUARDS ====================
+
+model Guard {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  firstName  String
+  lastName   String
+  phone      String?
+  employeeId String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  user        User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  creator     User                      @relation("GuardCreator", fields: [createdBy], references: [id])
+  assignments GuardBuildingAssignment[]
+  accessLogs  AccessLog[]
+
+  @@index([userId])
+  @@index([employeeId])
+}
+
+model GuardBuildingAssignment {
+  id         String   @id @default(uuid())
+  guardId    String
+  buildingId String
+  assignedBy String
+  assignedAt DateTime @default(now())
+
+  // Relations
+  guard    Guard    @relation(fields: [guardId], references: [id], onDelete: Cascade)
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  assigner User     @relation("GuardAssigner", fields: [assignedBy], references: [id])
+
+  @@unique([guardId, buildingId])
+  @@index([buildingId])
+  @@index([guardId])
+}
+
+// ==================== COIs ====================
+
+model COI {
+  id         String    @id @default(uuid())
+  vendorId   String? // Si es de vendor
+  tenantId   String? // Si es de tenant  
+  buildingId String
+  status     COIStatus @default(PENDING)
+
+  // Extracted data (OCR)
+  insuranceCompany String?
+  policyNumber     String?
+  effectiveDate    DateTime?
+  expirationDate   DateTime? // Nullable para migración
+  coverageType     String[]  @default([])
+  coverageAmounts  Json?
+
+  // GL Specific
+  glOccurrence   Float?
+  glAggregate    Float?
+  glProductsOps  Float?
+  glPersonalAdv  Float?
+  glMedicalExp   Float?
+  glDamageRented Float?
+
+  // Auto Specific
+  autoBodyInjury Float?
+  autoPropDamage Float?
+  autoCombined   Float?
+
+  // Umbrella
+  umbrellaLimit     Float?
+  umbrellaRetention Float?
+
+  // Workers Comp
+  wcPerAccident Float?
+  wcPerEmployee Float?
+  wcPolicyLimit Float?
+
+  // Additional Info
+  additionalInsured Boolean? @default(false) // Nullable para migración
+  waiverSubrogation Boolean  @default(false)
+  primaryNonContrib Boolean  @default(false)
+  noticeOfCancel    Int?
+
+  // Review
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  reviewNotes String?
+
+  // Meta
+  uploadedBy String? // Nullable para migración
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  vendor   Vendor?   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  building Building  @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  reviewer User?     @relation("COIReviewer", fields: [reviewedBy], references: [id])
+  uploader User?     @relation("COIUploader", fields: [uploadedBy], references: [id])
+  files    COIFile[]
+
+  @@index([vendorId])
+  @@index([tenantId])
+  @@index([buildingId])
+  @@index([status])
   @@index([expirationDate])
 }
 
 model COIFile {
-  id    String   @id @default(cuid())
-  coiId String
-  coi   COI      @relation(fields: [coiId], references: [id])
-  url   String
-  kind  FileKind
+  id         String   @id @default(uuid())
+  coiId      String
+  fileName   String   @default("unknown.pdf")
+  fileUrl    String   @default("")
+  fileSize   Int      @default(0)
+  mimeType   String   @default("application/pdf")
+  uploadedAt DateTime @default(now())
+
+  // Relations
+  coi COI @relation(fields: [coiId], references: [id], onDelete: Cascade)
+
+  @@index([coiId])
 }
 
-model CoiRequest {
-  id         String    @id @default(cuid())
-  token      String    @unique
+// ==================== REQUIREMENTS ====================
+
+model RequirementTemplate {
+  id         String  @id @default(uuid())
   buildingId String
-  building   Building  @relation(fields: [buildingId], references: [id])
-  vendorId   String
-  vendor     Vendor    @relation(fields: [vendorId], references: [id])
-  expiresAt  DateTime
-  usedAt     DateTime?
-  createdAt  DateTime  @default(now())
-
-  @@index([buildingId, vendorId])
-}
-
-model NotificationLog {
-  id    String   @id @default(cuid())
-  coiId String
-  kind  String // e.g., "SMS_EXPIRY"
-  tag   String // "D30" | "D15" | "D7"
-  at    DateTime @default(now())
-
-  @@unique([coiId, kind, tag])
-}
-
-model AuditLog {
-  id       String   @id @default(cuid())
-  entity   String // "COI"
-  entityId String
-  action   String // "REVIEW.APPROVED" | "REVIEW.REJECTED"
-  actorId  String
-  details  String?
-  at       DateTime @default(now())
-
-  @@index([entity, entityId])
-}
-
-model BrokerInbox {
-  id         String   @id @default(cuid())
-  source     String // "EMAIL" | "SFTP" | "API"
-  externalId String? // message-id / file path / api-id
-  vendorId   String?
-  buildingId String?
-  status     String // "RECEIVED"|"PARSED"|"ATTACHED"|"ERROR"
-  meta       Json?
-  at         DateTime @default(now())
-
-  @@index([source, externalId])
-}
-
-model BuildingIntegration {
-  id         String  @id @default(cuid())
-  buildingId String
-  kind       String // "ACCESS_WEBHOOK" | "ACCESS_API"
-  url        String?
-  apiKey     String?
+  name       String  @default("Default Requirements")
   active     Boolean @default(true)
+
+  // General Liability
+  glRequired      Boolean @default(true)
+  glMinOccurrence Float?  @default(1000000)
+  glMinAggregate  Float?  @default(2000000)
+
+  // Auto Liability
+  autoRequired    Boolean @default(false)
+  autoMinCombined Float?  @default(1000000)
+
+  // Umbrella
+  umbrellaRequired Boolean @default(false)
+  umbrellaMinLimit Float?  @default(5000000)
+
+  // Workers Comp
+  wcRequired Boolean @default(false)
+
+  // Additional Requirements
+  additionalInsuredRequired Boolean @default(true)
+  waiverSubrogationRequired Boolean @default(false)
+  primaryNonContribRequired Boolean @default(false)
+  noticeOfCancelMin         Int?    @default(30)
+
+  // Certificate Holder Text
+  holderName    String?
+  holderAddress String?
+
+  // Additional Insured Text  
+  additionalInsuredText String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // Relations
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@unique([buildingId, active])
+  @@index([buildingId])
 }
 
-model AuthToken {
-  id        String    @id @default(cuid())
-  userId    String
-  user      User      @relation("UserTokens", fields: [userId], references: [id], onDelete: Cascade)
-  kind      String // 'EMAIL_VERIFY' | 'PWD_RESET'
-  token     String    @unique
-  expiresAt DateTime
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([userId, kind])
-}
+// ==================== AUTHENTICATION ====================
 
 model RefreshToken {
-  id        String    @id @default(cuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User      @relation("UserRefreshTokens", fields: [userId], references: [id], onDelete: Cascade)
   tokenHash String    @unique
-  userAgent String?
-  ip        String?
   expiresAt DateTime
   revokedAt DateTime?
   createdAt DateTime  @default(now())
 
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
   @@index([userId])
+}
+
+model AuthToken {
+  id        String        @id @default(uuid())
+  userId    String
+  token     String        @unique
+  type      AuthTokenType
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId, type])
+}
+
+model UserInvitation {
+  id             String    @id @default(uuid())
+  email          String
+  role           UserRole
+  organizationId String?
+  invitedById    String
+  token          String    @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  inviter User @relation("UserInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([organizationId])
+  @@index([role])
+}
+
+// ==================== COI REQUESTS (PUBLIC) ====================
+
+model CoiRequest {
+  id         String    @id @default(uuid())
+  token      String    @unique
+  vendorId   String
+  buildingId String
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdBy  String? // Nullable para migración
+  createdAt  DateTime  @default(now())
+
+  // Relations
+  vendor   Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  creator  User?    @relation("RequestCreator", fields: [createdBy], references: [id])
+
+  @@index([token])
+  @@index([vendorId])
+  @@index([buildingId])
+}
+
+// ==================== ACCESS CONTROL ====================
+
+model AccessLog {
+  id         String       @id @default(uuid())
+  guardId    String
+  vendorId   String
+  buildingId String
+  action     AccessStatus
+  reason     String?
+  timestamp  DateTime     @default(now())
+
+  // Relations
+  guard    Guard    @relation(fields: [guardId], references: [id])
+  vendor   Vendor   @relation(fields: [vendorId], references: [id])
+  building Building @relation(fields: [buildingId], references: [id])
+
+  @@index([guardId])
+  @@index([vendorId])
+  @@index([buildingId])
+  @@index([timestamp])
+}
+
+// ==================== AUDIT & NOTIFICATIONS ====================
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  entityType String      @default("UNKNOWN") // COI, User, Building, etc.
+  entityId   String
+  action     AuditAction
+  actorId    String
+  metadata   Json?
+  createdAt  DateTime    @default(now())
+
+  // Relations
+  actor User @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+model NotificationLog {
+  id            String           @id @default(uuid())
+  userId        String? // Nullable para migración
+  type          NotificationType @default(EMAIL)
+  recipient     String           @default("")
+  subject       String?
+  content       String           @default("")
+  status        String           @default("pending")
+  sentAt        DateTime?
+  failureReason String?
+  createdAt     DateTime         @default(now())
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// ==================== INTEGRATIONS ====================
+
+model BuildingIntegration {
+  id              String   @id @default(uuid())
+  buildingId      String
+  integrationType String   @default("webhook")
+  webhookUrl      String?
+  apiKey          String?
+  config          Json?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  // Relations
+  building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@unique([buildingId, integrationType])
+  @@index([buildingId])
+}
+
+model BrokerInbox {
+  id          String            @id @default(uuid())
+  source      String
+  sender      String            @default("unknown")
+  subject     String?
+  body        String?
+  attachments Json?
+  status      BrokerInboxStatus @default(RECEIVED)
+  metadata    Json?
+  processedAt DateTime?
+  createdAt   DateTime          @default(now())
+
+  @@index([status])
+  @@index([sender])
+  @@index([createdAt])
 }

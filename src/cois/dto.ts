@@ -1,4 +1,4 @@
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import {
   IsBoolean,
   IsDateString,
@@ -7,7 +7,14 @@ import {
   IsString,
 } from "class-validator";
 export class CreateCoiDto {
-  @ApiProperty() @IsString() vendorId: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  tenantId?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  vendorId?: string;
   @ApiProperty() @IsString() buildingId: string;
   @ApiProperty() @IsString() insuredName: string;
   @ApiProperty({ required: false }) @IsOptional() @IsString() producer?: string;

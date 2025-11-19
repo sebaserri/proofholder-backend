@@ -1,4 +1,0 @@
--- AlterTable
-ALTER TABLE "COI" ALTER COLUMN "insuredName" DROP NOT NULL,
-ALTER COLUMN "effectiveDate" DROP NOT NULL,
-ALTER COLUMN "expirationDate" DROP NOT NULL;

@@ -19,14 +19,14 @@ export class AuditService {
 
   buildWhere(params: AuditListParams) {
     const where: any = {};
-    if (params.entity) where.entity = params.entity;
+    if (params.entity) where.entityType = params.entity;
     if (params.entityId) where.entityId = params.entityId;
     if (params.actorId) where.actorId = params.actorId;
     if (params.action) where.action = params.action;
     if (params.from || params.to) {
-      where.at = {};
-      if (params.from) where.at.gte = new Date(params.from);
-      if (params.to) where.at.lt = new Date(params.to);
+      where.createdAt = {};
+      if (params.from) where.createdAt.gte = new Date(params.from);
+      if (params.to) where.createdAt.lt = new Date(params.to);
     }
     return where;
   }
@@ -42,7 +42,7 @@ export class AuditService {
       this.prisma.auditLog.count({ where }),
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { at: sort },
+        orderBy: { createdAt: sort },
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -61,7 +61,7 @@ export class AuditService {
     const where = this.buildWhere(params);
     const items = await this.prisma.auditLog.findMany({
       where,
-      orderBy: { at: "desc" },
+      orderBy: { createdAt: "desc" },
       take: 5000, // límite razonable
     });
     return items;

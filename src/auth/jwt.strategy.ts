@@ -3,13 +3,16 @@ import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { Request } from "express";
 import { ACCESS_COOKIE } from "./auth.constants";
+import { UserRole } from "@prisma/client";
 
 type JwtPayload = {
   sub: string;
   email: string;
-  role: "ADMIN" | "VENDOR" | "GUARD" | string;
+  role: UserRole;
+  organizationId?: string | null;
   vendorId?: string;
-  name?: string;
+  firstName?: string | null;
+  lastName?: string | null;
 };
 
 @Injectable()
@@ -30,8 +33,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: payload.sub,
       email: payload.email,
       role: payload.role,
+      organizationId: payload.organizationId ?? null,
       vendorId: payload.vendorId,
-      name: payload.name,
+      firstName: payload.firstName ?? null,
+      lastName: payload.lastName ?? null,
     };
   }
 

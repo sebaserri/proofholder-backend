@@ -257,7 +257,7 @@ Cookies httpOnly/SameSite, rotación de refresh, **JwtAuthGuard**, **CsrfGuard**
 
 ## Objetivo
 
-Dar respuesta **APTO/NO APTO** para ingreso de vendors a edificios y listar vendors por edificio para guardias.
+Dar respuesta **APPROVED/REJECTED** para ingreso de vendors a edificios y listar vendors por edificio para guardias.
 
 ## Endpoints
 
@@ -265,8 +265,8 @@ Dar respuesta **APTO/NO APTO** para ingreso de vendors a edificios y listar vend
 
 * **Quién**: **JWT**.
 * **Roles**: `ADMIN`, `GUARD`.
-* **Hace**: evalúa si el vendor está **APTO** según último COI vigente + requisitos activos del edificio.
-* **Devuelve**: `CheckResponse` con estado (`APTO|NO_APTO`) y motivos.
+* **Hace**: evalúa si el vendor está **APPROVED** según último COI vigente + requisitos activos del edificio.
+* **Devuelve**: `CheckResponse` con estado (`APPROVED|REJECTED`) y motivos.
 
 ### GET `/access/vendors?buildingId=`
 
@@ -594,7 +594,7 @@ Servicios de notificación; en el MVP, **SMS de prueba** y hooks para eventos de
 
 * **AccessPushService**
 
-  * Postea a un **webhook** por edificio cada vez que cambia el estado **APTO/NO APTO** (por ejemplo, al aprobar/rechazar un COI).
+  * Postea a un **webhook** por edificio cada vez que cambia el estado **APPROVED/REJECTED** (por ejemplo, al aprobar/rechazar un COI).
 
 * **RolesGuard / JwtAuthGuard / CsrfGuard**
 
@@ -621,7 +621,7 @@ Servicios de notificación; en el MVP, **SMS de prueba** y hooks para eventos de
 # Resumen ejecutivo por módulo
 
 * **Auth**: alta/login, cookies seguras, refresh rotado, verificación email y reseteo de password.
-* **Access**: decisiones APTO/NO APTO y listas para portería.
+* **Access**: decisiones APPROVED/REJECTED y listas para portería.
 * **Audit**: consulta/export de logs de acciones clave.
 * **Buildings/Requirements**: inventario de edificios y su política activa.
 * **Vendors**: creación, consulta, teléfono, búsqueda rápida.
@@ -632,5 +632,4 @@ Servicios de notificación; en el MVP, **SMS de prueba** y hooks para eventos de
 * **Brokers**: ingesta automatizada por email/API con firma.
 * **Notifications**: utilitarios de comunicación y hooks.
 * **Seguridad transversal**: antivirus, roles, JWT/CSRF, webhooks firmados.
-
 

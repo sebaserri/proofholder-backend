@@ -3,40 +3,45 @@ import {
   ForbiddenException,
   Injectable,
 } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { RegisterDto, LoginDto } from "./dto";
 import { JwtService } from "@nestjs/jwt";
-import { hashPassword, verifyPassword } from "./password.util";
+import { AuthTokenType, UserRole, User, Vendor } from "@prisma/client";
 import { EmailService } from "../notifications/email.service";
-
-import { randomToken, hashToken, verifyTokenHash } from "./crypto.util";
+import { PrismaService } from "../prisma/prisma.service";
 import { ACCESS_TTL_MIN, REFRESH_TTL_DAYS } from "./auth.constants";
+import { randomToken, hashToken, verifyTokenHash } from "./crypto.util";
+import { LoginDto, RegisterDto } from "./dto";
+import { hashPassword, verifyPassword } from "./password.util";
 import { randomBytes } from "crypto";
-
-type Role = "ADMIN" | "VENDOR" | "GUARD";
 
 function makeToken(n = 32) {
   return randomBytes(n).toString("hex");
 }
+
 function addHours(h: number) {
   return new Date(Date.now() + h * 3600 * 1000);
 }
 
+type UserWithVendor = User & { vendor?: Vendor | null };
+
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
-    private jwt: JwtService,
-    private email: EmailService
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+    private readonly email: EmailService
   ) {}
 
-  private signAccess(payload: {
-    sub: string;
-    email: string;
-    role: Role | string;
-    vendorId?: string;
-    name?: string;
-  }) {
+  private async signAccess(user: UserWithVendor): Promise<string> {
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role as UserRole,
+      organizationId: user.organizationId ?? null,
+      vendorId: user.vendor?.id ?? null,
+      firstName: user.firstName ?? null,
+      lastName: user.lastName ?? null,
+    };
+
     return this.jwt.signAsync(payload, {
       expiresIn: `${ACCESS_TTL_MIN}m`,
       secret: process.env.JWT_SECRET || "change-me",
@@ -49,15 +54,15 @@ export class AuthService {
     const expiresAt = new Date(
       Date.now() + REFRESH_TTL_DAYS * 24 * 3600 * 1000
     );
+
     await this.prisma.refreshToken.create({
       data: {
         userId,
         tokenHash,
-        userAgent: ua?.slice(0, 255),
-        ip: ip?.slice(0, 64),
         expiresAt,
       },
     });
+
     return { token, expiresAt };
   }
 
@@ -67,12 +72,12 @@ export class AuthService {
     ua?: string,
     ip?: string
   ) {
-    // Busca el hash que matchee
     const tokens = await this.prisma.refreshToken.findMany({
       where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: "desc" },
       take: 10,
     });
+
     let matched: (typeof tokens)[number] | null = null;
     for (const t of tokens) {
       const ok = await verifyTokenHash(t.tokenHash, oldToken);
@@ -81,13 +86,16 @@ export class AuthService {
         break;
       }
     }
-    if (!matched) throw new ForbiddenException("Invalid refresh");
 
-    // Rotación: revoca el anterior y emite uno nuevo
+    if (!matched) {
+      throw new ForbiddenException("Invalid refresh");
+    }
+
     await this.prisma.refreshToken.update({
       where: { id: matched.id },
       data: { revokedAt: new Date() },
     });
+
     return this.issueRefresh(userId, ua, ip);
   }
 
@@ -95,32 +103,50 @@ export class AuthService {
     const exists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
-    if (exists) throw new BadRequestException("Email already registered");
+    if (exists) {
+      throw new BadRequestException("Email already registered");
+    }
 
     const hash = await hashPassword(dto.password);
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
         password: hash,
-        name: dto.name,
         role: dto.role,
-        vendorId: dto.vendorId,
+        firstName: dto.firstName ?? null,
+        lastName: dto.lastName ?? null,
+        phone: dto.phone ?? null,
       },
     });
+
+    // If this registration comes from an invitation, mark it as accepted
+    if (dto.invited) {
+      await this.prisma.userInvitation
+        .updateMany({
+          where: {
+            email: dto.email.toLowerCase(),
+            role: dto.role,
+            acceptedAt: null,
+            revokedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+          data: { acceptedAt: new Date() },
+        })
+        .catch(() => {});
+    }
 
     await this.issueEmailVerification(
       user.id,
       user.email,
-      user.name || undefined
+      user.firstName ?? undefined
     ).catch(() => {});
 
-    const at = await this.signAccess({
-      sub: user.id,
-      email: user.email,
-      role: user.role as any,
-      vendorId: user.vendorId ?? undefined,
-      name: user.name ?? undefined,
-    });
+    const full: UserWithVendor = {
+      ...user,
+      vendor: null,
+    };
+
+    const at = await this.signAccess(full);
     const { token: rt } = await this.issueRefresh(user.id);
 
     return { at, rt, user };
@@ -129,33 +155,34 @@ export class AuthService {
   async login(dto: LoginDto, ua?: string, ip?: string) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
+      include: { vendor: true },
     });
-    if (!user) throw new BadRequestException("Invalid credentials");
+    if (!user) {
+      throw new BadRequestException("Invalid credentials");
+    }
+
     const ok = await verifyPassword(user.password, dto.password);
-    if (!ok) throw new BadRequestException("Invalid credentials");
+    if (!ok) {
+      throw new BadRequestException("Invalid credentials");
+    }
 
-    if (!user.emailVerifiedAt)
+    if (!user.emailVerifiedAt) {
       throw new BadRequestException("Email not verified");
+    }
 
-    const at = await this.signAccess({
-      sub: user.id,
-      email: user.email,
-      role: user.role as any,
-      vendorId: user.vendorId ?? undefined,
-      name: user.name ?? undefined,
-    });
-
+    const at = await this.signAccess(user);
     const { token: rt } = await this.issueRefresh(user.id, ua, ip);
+
     return { at, rt, user };
   }
 
   async logout(userId: string, refreshToken: string) {
-    // revoca el refresh actual
     const tokens = await this.prisma.refreshToken.findMany({
       where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: "desc" },
       take: 20,
     });
+
     for (const t of tokens) {
       const ok = await verifyTokenHash(t.tokenHash, refreshToken);
       if (ok) {
@@ -166,6 +193,7 @@ export class AuthService {
         break;
       }
     }
+
     return { ok: true };
   }
 
@@ -173,13 +201,15 @@ export class AuthService {
     const t = await this.prisma.authToken.create({
       data: {
         userId,
-        kind: "EMAIL_VERIFY",
+        type: AuthTokenType.EMAIL_VERIFY,
         token: makeToken(),
         expiresAt: addHours(48),
       },
     });
+
     const base = process.env.PUBLIC_APP_URL || "http://localhost:4000";
     const link = `${base}/(auth)/verify-email?token=${t.token}`;
+
     await this.email.send(
       email,
       "Verifica tu email",
@@ -189,6 +219,7 @@ export class AuthService {
       <p><a href="${link}">${link}</a></p>
     `
     );
+
     return { ok: true };
   }
 
@@ -196,14 +227,16 @@ export class AuthService {
     const t = await this.prisma.authToken.findUnique({
       where: { token: tokenStr },
     });
+
     if (
       !t ||
-      t.kind !== "EMAIL_VERIFY" ||
+      t.type !== AuthTokenType.EMAIL_VERIFY ||
       t.usedAt ||
       t.expiresAt < new Date()
     ) {
       throw new BadRequestException("Invalid token");
     }
+
     await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: t.userId },
@@ -214,34 +247,38 @@ export class AuthService {
         data: { usedAt: new Date() },
       }),
     ]);
+
     return { ok: true };
   }
 
   async resendVerification(email: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
-    if (user)
+    if (user) {
       await this.issueEmailVerification(
         user.id,
         user.email,
-        user.name ?? undefined
+        user.firstName ?? undefined
       );
+    }
     return { ok: true };
   }
 
   async forgotPassword(email: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
-    // devolver ok siempre para no filtrar existencia
+
     if (user) {
       const t = await this.prisma.authToken.create({
         data: {
           userId: user.id,
-          kind: "PWD_RESET",
+          type: AuthTokenType.PWD_RESET,
           token: makeToken(),
           expiresAt: addHours(2),
         },
       });
+
       const base = process.env.PUBLIC_APP_URL || "http://localhost:4000";
       const link = `${base}/(auth)/reset-password?token=${t.token}`;
+
       await this.email.send(
         email,
         "Restablecer contraseña",
@@ -251,6 +288,7 @@ export class AuthService {
       `
       );
     }
+
     return { ok: true };
   }
 
@@ -258,10 +296,18 @@ export class AuthService {
     const t = await this.prisma.authToken.findUnique({
       where: { token: tokenStr },
     });
-    if (!t || t.kind !== "PWD_RESET" || t.usedAt || t.expiresAt < new Date()) {
+
+    if (
+      !t ||
+      t.type !== AuthTokenType.PWD_RESET ||
+      t.usedAt ||
+      t.expiresAt < new Date()
+    ) {
       throw new BadRequestException("Invalid token");
     }
+
     const hash = await hashPassword(password);
+
     await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: t.userId },
@@ -272,6 +318,7 @@ export class AuthService {
         data: { usedAt: new Date() },
       }),
     ]);
+
     return { ok: true };
   }
 
@@ -287,17 +334,17 @@ export class AuthService {
       ua,
       ip
     );
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
 
-    if (!user) throw new ForbiddenException("User not found");
-
-    const at = await this.signAccess({
-      sub: user.id,
-      email: user.email,
-      role: user.role as any,
-      vendorId: user.vendorId ?? undefined,
-      name: user.name ?? undefined,
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { vendor: true },
     });
+
+    if (!user) {
+      throw new ForbiddenException("User not found");
+    }
+
+    const at = await this.signAccess(user);
     return { at, rt: newRt, user };
   }
 }

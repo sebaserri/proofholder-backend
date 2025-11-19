@@ -1,7 +1,8 @@
 import { Injectable } from "@nestjs/common";
+import { AuditAction, COIStatus } from "@prisma/client";
+import { NotificationHooks } from "../notifications/hooks";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCoiDto } from "./dto";
-import { NotificationHooks } from "../notifications/hooks";
 
 type ReviewPayload = {
   status: "PENDING" | "APPROVED" | "REJECTED";
@@ -11,7 +12,10 @@ type ReviewPayload = {
 
 @Injectable()
 export class CoisService {
-  constructor(private prisma: PrismaService, private hooks: NotificationHooks) {}
+  constructor(
+    private prisma: PrismaService,
+    private hooks: NotificationHooks
+  ) {}
 
   list(filter: any) {
     return this.prisma.cOI.findMany({
@@ -28,23 +32,27 @@ export class CoisService {
     return this.prisma.cOI.create({
       data: {
         vendorId: dto.vendorId,
+        tenantId: dto.tenantId,
         buildingId: dto.buildingId,
-        insuredName: dto.insuredName,
-        producer: dto.producer,
-        generalLiabLimit: dto.generalLiabLimit,
-        autoLiabLimit: dto.autoLiabLimit,
-        umbrellaLimit: dto.umbrellaLimit,
-        workersComp: dto.workersComp,
+        status: COIStatus.PENDING,
+        insuranceCompany: dto.producer,
+        coverageAmounts: {
+          insuredName: dto.insuredName,
+          generalLiabLimit: dto.generalLiabLimit,
+          autoLiabLimit: dto.autoLiabLimit,
+          umbrellaLimit: dto.umbrellaLimit,
+          workersComp: dto.workersComp,
+          certificateHolder: dto.certificateHolder,
+        },
         additionalInsured: dto.additionalInsured,
-        waiverOfSubrogation: dto.waiverOfSubrogation,
-        certificateHolder: dto.certificateHolder,
+        waiverSubrogation: dto.waiverOfSubrogation ?? false,
         effectiveDate: new Date(dto.effectiveDate),
         expirationDate: new Date(dto.expirationDate),
         files: dto.files
           ? {
               create: dto.files.map((f) => ({
-                url: f.url,
-                kind: f.kind as any,
+                fileUrl: f.url,
+                mimeType: "application/pdf",
               })),
             }
           : undefined,
@@ -60,16 +68,37 @@ export class CoisService {
     });
   }
 
+  async findByVendor(vendorId: string, buildingId?: string) {
+    return this.prisma.cOI.findMany({
+      where: {
+        vendorId,
+        buildingId: buildingId || undefined,
+      },
+      orderBy: { createdAt: "desc" },
+      include: { files: true, building: true },
+    });
+  }
+
+  async findByTenant(tenantId: string) {
+    return this.prisma.cOI.findMany({
+      where: {
+        tenantId,
+      },
+      orderBy: { createdAt: "desc" },
+      include: { files: true, building: true },
+    });
+  }
+
   async review(id: string, body: ReviewPayload, actorId?: string) {
     const data: any = {
-      status: body.status as any,
-      notes: body.notes,
+      status: body.status as COIStatus,
+      reviewNotes: body.notes,
     };
     if (body.flags?.additionalInsured !== undefined) {
       data.additionalInsured = body.flags.additionalInsured;
     }
     if (body.flags?.waiverOfSubrogation !== undefined) {
-      data.waiverOfSubrogation = body.flags.waiverOfSubrogation;
+      data.waiverSubrogation = body.flags.waiverOfSubrogation;
     }
 
     const coi = await this.prisma.cOI.update({
@@ -78,27 +107,25 @@ export class CoisService {
       include: { files: true, vendor: true, building: true },
     });
 
-    if (body.status === 'REJECTED') {
+    if (body.status === "REJECTED") {
       try {
         const email = coi.vendor?.contactEmail || (coi.vendor as any)?.email;
-        const name = coi.vendor?.legalName || 'Proveedor';
-        await this.hooks.onCoiRejected(email, name, coi.id, body.notes || '');
+        const name = coi.vendor?.companyName || "Proveedor";
+        await this.hooks.onCoiRejected(email, name, coi.id, body.notes || "");
       } catch {}
     }
     await this.prisma.auditLog
       .create({
         data: {
-          entity: "COI",
+          entityType: "COI",
           entityId: id,
-          action:
-            body.status === "APPROVED"
-              ? "REVIEW.APPROVED"
-              : body.status === "REJECTED"
-              ? "REVIEW.REJECTED"
-              : "REVIEW.UPDATE",
+          action: AuditAction.REVIEW_COI,
           actorId: actorId || "system",
-          details: body.notes || null,
-        },
+          metadata: {
+            status: body.status,
+            notes: body.notes || null,
+          },
+        } as any,
       })
       .catch(() => {});
 

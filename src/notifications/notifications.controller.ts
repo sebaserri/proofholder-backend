@@ -7,8 +7,9 @@ import {
 } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/jwt.guard";
 import { NotificationsService } from "./notifications.service";
-import { Roles } from '../auth/roles.decorator';
-import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from "../auth/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
+import { UserRole } from "@prisma/client";
 
 class TestSmsDto {
   to: string;
@@ -24,7 +25,11 @@ class SmsResult {
 @ApiBearerAuth()
 @Controller("notifications")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN')
+@Roles(
+  UserRole.ACCOUNT_OWNER,
+  UserRole.PORTFOLIO_MANAGER,
+  UserRole.PROPERTY_MANAGER
+)
 export class NotificationsController {
   constructor(private readonly svc: NotificationsService) {}
   @Post("test-sms")

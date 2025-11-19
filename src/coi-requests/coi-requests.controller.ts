@@ -23,6 +23,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CoiRequestsService } from "./coi-requests.service";
 import { PublicSubmitCoiDto } from "./dto";
 import { AntivirusService } from "../security/antivirus.service";
+import { UserRole } from "@prisma/client";
+import { CoisService } from "../cois/cois.service";
+import { CreateCoiDto } from "../cois/dto";
 
 class CoiRequestMeta {
   vendor: { id: string; legalName: string };
@@ -37,14 +40,18 @@ export class CoiRequestsController {
     private readonly svc: CoiRequestsService,
     private readonly files: FilesService,
     private readonly prisma: PrismaService,
-    private readonly av: AntivirusService
+    private readonly av: AntivirusService,
+    private readonly cois: CoisService
   ) {}
 
   @Post()
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles("ADMIN")
-  @UseGuards(JwtAuthGuard)
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER
+  )
   @ApiOperation({ summary: "Crear solicitud (ADMIN)" })
   create(
     @Body() body: { buildingId: string; vendorId: string; ttlHours?: number }
@@ -65,7 +72,7 @@ export class CoiRequestsController {
       where: { buildingId: req.buildingId, active: true },
     });
     return {
-      vendor: { id: req.vendor.id, legalName: req.vendor.legalName },
+      vendor: { id: req.vendor.id, legalName: req.vendor.companyName },
       building: {
         id: req.building.id,
         name: req.building.name,
@@ -102,33 +109,23 @@ export class CoiRequestsController {
           if (!res.clean) throw new Error('Archivo infectado o inválido');
         }
       }
-      const prisma = this.prisma as any;
-      const coi = await prisma.cOI.create({
-        data: {
-          vendorId: req.vendorId,
-          buildingId: req.buildingId,
-          insuredName: body.insuredName,
-          producer: body.producer,
-          generalLiabLimit: body.generalLiabLimit,
-          autoLiabLimit: body.autoLiabLimit,
-          umbrellaLimit: body.umbrellaLimit,
-          workersComp: body.workersComp,
-          additionalInsured: body.additionalInsured,
-          waiverOfSubrogation: body.waiverOfSubrogation,
-          certificateHolder: body.certificateHolder,
-          effectiveDate: new Date(body.effectiveDate),
-          expirationDate: new Date(body.expirationDate),
-          files: body.files
-            ? {
-                create: body.files.map((f: any) => ({
-                  url: f.url,
-                  kind: f.kind as any,
-                })),
-              }
-            : undefined,
-        },
-        include: { files: true },
-      });
+      const dto: CreateCoiDto = {
+        vendorId: req.vendorId,
+        buildingId: req.buildingId,
+        insuredName: body.insuredName,
+        producer: body.producer,
+        generalLiabLimit: body.generalLiabLimit,
+        autoLiabLimit: body.autoLiabLimit,
+        umbrellaLimit: body.umbrellaLimit,
+        workersComp: body.workersComp,
+        additionalInsured: body.additionalInsured,
+        waiverOfSubrogation: body.waiverOfSubrogation,
+        certificateHolder: body.certificateHolder,
+        effectiveDate: body.effectiveDate,
+        expirationDate: body.expirationDate,
+        files: body.files,
+      };
+      const coi = await this.cois.create(dto);
       await this.svc.markUsed(req.id);
       return { ok: true, coiId: coi.id };
     })();

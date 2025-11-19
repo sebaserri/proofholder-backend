@@ -26,6 +26,7 @@ import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import { AntivirusService } from "../security/antivirus.service";
 import { CoisService } from "./cois.service";
+import { UserRole } from "@prisma/client";
 
 @ApiTags("COIs")
 @ApiBearerAuth()
@@ -36,7 +37,12 @@ export class CoisController {
   constructor(private svc: CoisService, private av: AntivirusService) {}
 
   @Get()
-  @Roles("ADMIN", "VENDOR")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER,
+    UserRole.VENDOR
+  )
   @ApiOperation({ summary: "Listar COIs" })
   @ApiQuery({ name: "buildingId", required: false })
   @ApiQuery({
@@ -45,15 +51,22 @@ export class CoisController {
     enum: ["PENDING", "APPROVED", "REJECTED"],
   })
   list(@CurrentUser() user: JwtUser, @Query() q: any) {
-    if (user.role === "VENDOR") q = { ...q, vendorId: user.vendorId };
+    if (user.role === UserRole.VENDOR && user.vendorId) {
+      q = { ...q, vendorId: user.vendorId };
+    }
     return this.svc.list(q);
   }
 
   @Post()
-  @Roles("ADMIN", "VENDOR")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER,
+    UserRole.VENDOR
+  )
   @ApiOperation({ summary: "Crear COI" })
   async create(@CurrentUser() user: JwtUser, @Body() body: any) {
-    if (user.role === "VENDOR") {
+    if (user.role === UserRole.VENDOR && user.vendorId) {
       if (body.vendorId && body.vendorId !== user.vendorId)
         throw new ForbiddenException("VendorId inválido");
       body.vendorId = user.vendorId;
@@ -74,7 +87,11 @@ export class CoisController {
   }
 
   @Get("export")
-  @Roles("ADMIN")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER
+  )
   @ApiOperation({ summary: "Exportar COIs a CSV" })
   @ApiQuery({ name: "buildingId", required: false })
   @ApiQuery({
@@ -88,12 +105,12 @@ export class CoisController {
       "id",
       "vendorId",
       "buildingId",
-      "insuredName",
+      "insuranceCompany",
       "status",
       "effectiveDate",
       "expirationDate",
       "additionalInsured",
-      "waiverOfSubrogation",
+      "waiverSubrogation",
     ];
     const rows = [fields.join(",")];
     for (const it of items) {
@@ -101,12 +118,12 @@ export class CoisController {
         it.id,
         it.vendorId,
         it.buildingId,
-        JSON.stringify(it.insuredName || ""),
+        JSON.stringify(it.insuranceCompany || ""),
         it.status,
         it.effectiveDate?.toISOString?.() || "",
         it.expirationDate?.toISOString?.() || "",
         it.additionalInsured ? "true" : "false",
-        it.waiverOfSubrogation ? "true" : "false",
+        it.waiverSubrogation ? "true" : "false",
       ];
       rows.push(
         r
@@ -124,18 +141,31 @@ export class CoisController {
   }
 
   @Get(":id")
-  @Roles("ADMIN", "VENDOR")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER,
+    UserRole.VENDOR
+  )
   @ApiOperation({ summary: "Obtener COI por id" })
   @ApiParam({ name: "id", required: true })
   async get(@CurrentUser() user: JwtUser, @Param("id") id: string) {
     const coi = await this.svc.get(id);
-    if (user.role === "VENDOR" && coi?.vendorId !== user.vendorId)
+    if (
+      user.role === UserRole.VENDOR &&
+      user.vendorId &&
+      coi?.vendorId !== user.vendorId
+    )
       throw new ForbiddenException("No puedes ver COIs de otros vendors");
     return coi;
   }
 
   @Patch(":id/review")
-  @Roles("ADMIN")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER
+  )
   @ApiOperation({ summary: "Revisar COI (aprobar/rechazar)" })
   @ApiParam({ name: "id", required: true })
   review(
@@ -147,7 +177,11 @@ export class CoisController {
   }
 
   @Patch(":id/approve")
-  @Roles("ADMIN")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER
+  )
   @ApiOperation({ summary: "Aprobar COI" })
   @ApiParam({ name: "id", required: true })
   approve(
@@ -163,7 +197,11 @@ export class CoisController {
   }
 
   @Patch(":id/reject")
-  @Roles("ADMIN")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER
+  )
   @ApiOperation({ summary: "Rechazar COI" })
   @ApiParam({ name: "id", required: true })
   reject(
@@ -179,7 +217,11 @@ export class CoisController {
   }
 
   @Get(":id/files.zip")
-  @Roles("ADMIN")
+  @Roles(
+    UserRole.ACCOUNT_OWNER,
+    UserRole.PORTFOLIO_MANAGER,
+    UserRole.PROPERTY_MANAGER
+  )
   @ApiOperation({ summary: "Descargar ZIP de archivos del COI" })
   @ApiParam({ name: "id", required: true })
   async zipFiles(@Param("id") id: string, @Res() res: Response) {
@@ -197,9 +239,10 @@ export class CoisController {
     archive.pipe(res);
     const bucket = process.env.S3_BUCKET as string;
     for (const f of files) {
-      const keyFromBucket = (f.url as string).split(`${bucket}/`)[1];
-      const keyFromAws = (f.url as string).split("amazonaws.com/")[1];
-      const key = keyFromBucket || keyFromAws || f.url;
+      const url = f.fileUrl as string;
+      const keyFromBucket = url.split(`${bucket}/`)[1];
+      const keyFromAws = url.split("amazonaws.com/")[1];
+      const key = keyFromBucket || keyFromAws || url;
       try {
         const obj = await this.s3.send(
           new GetObjectCommand({ Bucket: bucket, Key: key })
@@ -208,7 +251,7 @@ export class CoisController {
         const fname = key.split("/").pop() || `file-${f.id}.pdf`;
         archive.append(stream, { name: fname });
       } catch (e) {
-        archive.append(Buffer.from(`Error fetching ${f.url}: ${e}`), {
+        archive.append(Buffer.from(`Error fetching ${url}: ${e}`), {
           name: `ERROR_${f.id}.txt`,
         });
       }

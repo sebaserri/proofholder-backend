@@ -9,15 +9,16 @@ export class AccessPushService {
   async notify(
     buildingId: string,
     vendorId: string,
-    status: "APTO" | "NO_APTO",
+    status: "APPROVED" | "REJECTED",
     meta?: any
   ) {
     const cfg = await this.prisma.buildingIntegration.findFirst({
-      where: { buildingId, kind: "ACCESS_WEBHOOK", active: true },
+      where: { buildingId, integrationType: "ACCESS_WEBHOOK", active: true },
     });
-    if (!cfg?.url) return { ok: false, reason: "No webhook configured" };
+    if (!cfg?.webhookUrl)
+      return { ok: false, reason: "No webhook configured" };
     try {
-      await fetch(cfg.url, {
+      await fetch(cfg.webhookUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -8,8 +8,9 @@ import {
 } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/jwt.guard";
 import { RequirementsService } from "./requirements.service";
-import { Roles } from '../auth/roles.decorator';
-import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from "../auth/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
+import { UserRole } from "@prisma/client";
 
 class RequirementTemplateDto {
   id: string;
@@ -37,7 +38,11 @@ class CreateRequirementDto {
 @ApiBearerAuth()
 @Controller("buildings/:buildingId/requirements")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN')
+@Roles(
+  UserRole.ACCOUNT_OWNER,
+  UserRole.PORTFOLIO_MANAGER,
+  UserRole.PROPERTY_MANAGER
+)
 export class RequirementsController {
 
   constructor(private svc: RequirementsService) {}

@@ -133,8 +133,26 @@ export class AuthController {
 
   private publicUser(u: any) {
     if (!u) return u;
-    const { id, email, role, vendorId, name } = u;
-    return { id, email, role, vendorId, name };
+    const {
+      id,
+      email,
+      role,
+      organizationId,
+      vendor,
+      firstName,
+      lastName,
+      phone,
+    } = u;
+    return {
+      id,
+      email,
+      role,
+      organizationId,
+      vendorId: vendor?.id ?? null,
+      firstName,
+      lastName,
+      phone,
+    };
   }
 
   private makeCsrf() {

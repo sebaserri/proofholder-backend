@@ -3,6 +3,7 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { NotificationsService } from "../notifications/notifications.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationHooks } from "../notifications/hooks";
+import { NotificationType } from "@prisma/client";
 
 function daysBetween(target: Date, from: Date) {
   const A = new Date(target).setHours(0,0,0,0);
@@ -39,9 +40,14 @@ export class AlertsService {
       const phone = c.vendor?.contactPhone;
       if (!phone) continue;
 
+      const smsSubject = `COI_EXPIRY_SMS_${c.id}_${tag}`;
       const existingSms = await this.prisma.notificationLog
-        .findUnique({
-          where: { coiId_kind_tag: { coiId: c.id, kind: "SMS_EXPIRY", tag } },
+        .findFirst({
+          where: {
+            type: NotificationType.SMS,
+            recipient: phone,
+            subject: smsSubject,
+          },
         })
         .catch(() => null);
       if (existingSms) {
@@ -49,32 +55,61 @@ export class AlertsService {
         continue;
       }
 
-      const msg = `Aviso: el COI de ${c.vendor.legalName} para ${
-        c.building.name
-      } vence en ${d} días (el ${new Date(
+      if (!c.vendor || !c.building) continue;
+
+      const vendorName = c.vendor.companyName;
+      const buildingName = c.building.name;
+
+      const msg = `Aviso: el COI de ${vendorName} para ${buildingName} vence en ${d} días (el ${new Date(
         c.expirationDate
       ).toLocaleDateString()}). Por favor sube la renovación.`;
       try {
         await this.sms.sendSms(phone, msg);
         await this.prisma.notificationLog.create({
-          data: { coiId: c.id, kind: "SMS_EXPIRY", tag },
+          data: {
+            type: NotificationType.SMS,
+            recipient: phone,
+            subject: smsSubject,
+            content: msg,
+            status: "sent",
+            sentAt: new Date(),
+          },
         });
         this.logger.log(`SMS sent to ${phone} for COI ${c.id} [${tag}]`);
 
-        const existingEmail = await this.prisma.notificationLog.findUnique({
-          where: { coiId_kind_tag: { coiId: c.id, kind: 'EMAIL_EXPIRY', tag } },
-        }).catch(() => null);
+        const emailSubject = `COI_EXPIRY_EMAIL_${c.id}_${tag}`;
+        const existingEmail = await this.prisma.notificationLog
+          .findFirst({
+            where: {
+              type: NotificationType.EMAIL,
+              recipient: c.vendor.contactEmail,
+              subject: emailSubject,
+            },
+          })
+          .catch(() => null);
         if (!existingEmail) {
-          const vendorEmail = c.vendor.contactEmail || (c.vendor as any).email;
-          const vendorName = c.vendor.legalName;
-          const buildingName = c.building.name;
+          const vendorEmail =
+            c.vendor.contactEmail || (c.vendor as any)?.email || "";
 
           if (!c.expirationDate) continue;
           const iso = c.expirationDate.toISOString().slice(0, 10);
           try {
-            await this.hooks.onCoiExpiry(vendorEmail, vendorName, buildingName, d, iso);
+            await this.hooks.onCoiExpiry(
+              vendorEmail,
+              vendorName,
+              buildingName,
+              d,
+              iso
+            );
             await this.prisma.notificationLog.create({
-              data: { coiId: c.id, kind: 'EMAIL_EXPIRY', tag },
+              data: {
+                type: NotificationType.EMAIL,
+                recipient: vendorEmail,
+                subject: emailSubject,
+                content: `Aviso de vencimiento de COI para ${vendorName} en ${buildingName} (${iso})`,
+                status: "sent",
+                sentAt: new Date(),
+              },
             });
           } catch (e) {
             this.logger.error(`Email expiry failed for COI ${c.id}: ${e}`);

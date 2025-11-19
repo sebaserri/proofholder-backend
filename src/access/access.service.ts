@@ -35,7 +35,7 @@ export class AccessService {
     const results: any[] = [];
     for (const v of vendors) {
       const r = await this.check(v.id, buildingId);
-      results.push({ vendorId: v.id, vendorName: v.legalName, ...r });
+      results.push({ vendorId: v.id, vendorName: v.companyName, ...r });
     }
     return results;
   }

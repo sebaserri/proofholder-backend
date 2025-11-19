@@ -11,6 +11,7 @@ import { JwtAuthGuard } from "../auth/jwt.guard";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import { AuditService } from "./audit.service";
+import { UserRole } from "@prisma/client";
 
 class AuditListResponse {
   items: any[];
@@ -24,7 +25,7 @@ class AuditListResponse {
 @ApiBearerAuth()
 @Controller("audit")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles("ADMIN")
+@Roles(UserRole.ACCOUNT_OWNER)
 export class AuditController {
   constructor(private readonly audit: AuditService) {}
 
@@ -112,23 +113,23 @@ export class AuditController {
     });
     const headers = [
       "id",
-      "entity",
+      "entityType",
       "entityId",
       "action",
       "actorId",
-      "details",
-      "at",
+      "metadata",
+      "createdAt",
     ];
     const rows = [headers.join(",")];
     for (const it of items) {
       const row = [
         it.id,
-        it.entity,
+        it.entityType,
         it.entityId,
         it.action,
         it.actorId,
-        JSON.stringify(it.details || ""),
-        new Date(it.at).toISOString(),
+        JSON.stringify(it.metadata || ""),
+        new Date(it.createdAt).toISOString(),
       ]
         .map((v) => (typeof v === "string" ? v.replace(/\n/g, " ") : v))
         .join(",");

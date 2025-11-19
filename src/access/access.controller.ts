@@ -10,16 +10,22 @@ import { AccessService } from "./access.service";
 import { CheckResponse } from "./checkResponse.dto";
 import { RolesGuard } from "../auth/roles.guard";
 import { Roles } from "../auth/roles.decorator";
+import { UserRole } from "@prisma/client";
 
 @ApiTags("Access")
 @ApiBearerAuth()
 @Controller("access")
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN','GUARD')
+@Roles(
+  UserRole.ACCOUNT_OWNER,
+  UserRole.PORTFOLIO_MANAGER,
+  UserRole.PROPERTY_MANAGER,
+  UserRole.GUARD
+)
 export class AccessController {
   constructor(private svc: AccessService) {}
   @Get("check")
-  @ApiOperation({ summary: "Consultar APTO/NO APTO" })
+  @ApiOperation({ summary: "Consultar APPROVED/REJECTED" })
   @ApiQuery({ name: "vendorId", required: true })
   @ApiQuery({ name: "buildingId", required: true })
   check(
