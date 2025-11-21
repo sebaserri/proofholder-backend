@@ -142,12 +142,12 @@ export class VendorsController {
   /**
    * Obtener autorizaciones del vendor
    */
-  @Get("me/authorizations")
+  @Get("me/authorizations/:id")
   @ApiOperation({ summary: "Obtener autorizaciones del vendor" })
   @ApiParam({ name: "id", description: "ID del vendor" })
   @ApiResponse({ status: 200, type: [VendorAuthorizationDto] })
-  async getAuthorizations(@CurrentUser() user: User) {
-    const vendor = await this.svc.get(user.id);
+  async getAuthorizations(@CurrentUser() user: User, @Param("id") id: string){
+    const vendor = await this.svc.get(id);
 
     if (!vendor) {
       throw new NotFoundException("Vendor no encontrado");
@@ -160,14 +160,14 @@ export class VendorsController {
           "Solo puede ver sus propias autorizaciones"
         );
       }
-      return this.svc.getVendorAuthorizations(user.id);
+      return this.svc.getVendorAuthorizations(vendor.id);
     }
 
     // Management ve autorizaciones de sus edificios
     if (this.permissions.canApproveVendors(user)) {
       const buildings = await this.permissions.getUserBuildings(user);
       const buildingIds = buildings.map((b) => b.id);
-      return this.svc.getVendorAuthorizationsForBuildings(user.id, buildingIds);
+      return this.svc.getVendorAuthorizationsForBuildings(vendor.id, buildingIds);
     }
 
     throw new ForbiddenException(
